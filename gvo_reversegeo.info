@@ -1,0 +1,8 @@
+name = GVO Reverse Geo 
+description	= Periodically updates missing Google geocode data for the location module
+core = 6.x
+
+dependencies[] = location
+
+package = "Global Voices Timemap"
+version = "6.x-1.0"

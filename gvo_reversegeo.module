@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * @file
+ * Periodically updates missing Google geocode data for blogger profiles
+ * 
+ * Code taken from http://metaltoad.com/blog/using-phpmysql-wdrupal-update-missing-google-geocode-data
+ */
+
+/**
+ * Implementation of hook_cron()
+ * When the cron runs, try to resolve any locations that have a lat or lon = 0
+ */
+function gvo_reversegeo_cron() {
+  // Fetch all locations with lat == 0 || lon == 0 and bin into $locations array
+  $locations = array();
+  $query = "SELECT * FROM {location} l WHERE l.latitude=0 AND l.longitude=0";
+  $result = db_query($query);
+  while ($data = db_fetch_array($result)) {
+    $locations[] = $data;
+  }
+  
+  // Loop through the geocode-less addresses and re-submit to google maps to try to get valid location data
+  $identifiers = array('name', 'street', 'city', 'province', 'postal_code', 'country');
+  foreach ($locations as $location) {
+    // Boolean sentinel variable that control while loop
+    $geocode_pending = true;
+    while ($geocode_pending) {
+      // Build address array and implode into single string
+      $search = array();
+      foreach ($identifiers as $identifier) {
+        if ($location[$identifier] != '') {
+          $search[] = trim($location[$identifier]);
+        }
+      }
+      $search = implode(' ', $search);
+    
+      // Execute query and loda into an xml object
+      $search = 'http://maps.google.com/maps/geo?output=xml&q=' . urlencode($search);
+      $xml = simplexml_load_file($search);
+      
+      // Deal with returned values based on the status code
+      $status = $xml->Response->Status->code;
+      if (strcmp($status, "200") == 0) {
+        // Successful geocode
+        $geocode_pending = false;
+        $coordinates = $xml->Response->Placemark->Point->coordinates;
+        $coordinatesSplit = split(",", $coordinates);
+        // Format: longitude, latitude
+        $lat = $coordinatesSplit[1];
+        $lng = $coordinatesSplit[0];
+        // Create new object and update record in DB correct geocode data
+        $record = new stdClass();
+        $record->lid = $location['lid'];
+        $record->latitude = $lat;
+        $record->longitude = $lng;
+        $record->source = 3; // LOCATION_LATLON_GEOCODED_EXACT
+        drupal_write_record('location', $record, 'lid');
+      } else if (strcmp($status, "620") == 0) {
+        // sent geocodes too fast
+        $delay += 100000;
+      } else {
+        // failure to geocode
+        $geocode_pending = false;
+      }
+      usleep($delay);
+    }
+  }
+}
